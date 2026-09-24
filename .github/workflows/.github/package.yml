@@ -1,0 +1,84 @@
+name: Reusable - Create Package
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+      package_name:
+        required: true
+        type: string
+
+      dry_run:
+        required: true
+        type: boolean
+
+    secrets:
+      API_TOKEN:
+        required: true
+
+    outputs:
+      package_id:
+        description: "Created package ID"
+        value: ${{ jobs.create.outputs.package_id }}
+
+jobs:
+
+  create:
+    runs-on: ubuntu-latest
+
+    outputs:
+      package_id: ${{ steps.create.outputs.package_id }}
+
+    steps:
+
+      - name: Validate inputs
+        run: |
+          echo "Environment : ${{ inputs.environment }}"
+          echo "Package     : ${{ inputs.package_name }}"
+          echo "Dry Run     : ${{ inputs.dry_run }}"
+
+      - name: Dry Run
+        if: inputs.dry_run == true
+        run: |
+          echo "=================================="
+          echo "DRY RUN - CREATE PACKAGE"
+          echo "=================================="
+          echo "Would create:"
+          echo "Package: ${{ inputs.package_name }}"
+          echo "Environment: ${{ inputs.environment }}"
+
+          echo "DRY-RUN-PACKAGE-ID" >> "$GITHUB_OUTPUT"
+
+      - name: Create package
+        id: create
+        if: inputs.dry_run == false
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          response=$(curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request POST \
+            --url "https://api.example.com/packages" \
+            --header "Authorization: Bearer ${API_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{
+              "name": "${{ inputs.package_name }}",
+              "environment": "${{ inputs.environment }}"
+            }')
+
+          echo "$response"
+
+          package_id=$(echo "$response" | jq -r '.id')
+
+          if [ -z "$package_id" ] || [ "$package_id" = "null" ]; then
+            echo "ERROR: Package ID was not returned"
+            exit 1
+          fi
+
+          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
