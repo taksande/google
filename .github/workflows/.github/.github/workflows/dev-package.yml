@@ -1,0 +1,62 @@
+name: DEV Package Operations
+
+on:
+
+  workflow_dispatch:
+
+    inputs:
+
+      operation:
+        description: "Select package operation"
+        required: true
+        type: choice
+
+        options:
+          - create-package
+          - upload-package
+          - distribute-package
+          - download-package
+          - deploy-package
+          - admin-mode
+          - cleanup-package
+
+      package_name:
+        description: "Package name"
+        required: true
+        type: string
+
+      package_version:
+        description: "Package version"
+        required: true
+        type: string
+
+      dry_run:
+        description: "Dry run"
+        required: true
+        default: true
+        type: boolean
+
+
+jobs:
+
+  package-operation:
+
+    uses: ./.github/workflows/package-operations.yml
+
+    with:
+
+      environment: dev
+
+      operation: ${{ inputs.operation }}
+
+      package_name: ${{ inputs.package_name }}
+
+      package_version: ${{ inputs.package_version }}
+
+      dry_run: ${{ inputs.dry_run }}
+
+      api_base_url: ${{ vars.PACKAGE_API_URL }}
+
+    secrets:
+
+      API_TOKEN: ${{ secrets.PACKAGE_API_TOKEN }}
