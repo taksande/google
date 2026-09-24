@@ -1,84 +1,429 @@
-name: Reusable - Create Package
+name: Reusable Package Operations
 
 on:
   workflow_call:
+
     inputs:
+
       environment:
+        description: "Target environment"
+        required: true
+        type: string
+
+      operation:
+        description: "Package operation to execute"
         required: true
         type: string
 
       package_name:
+        description: "Package name"
+        required: true
+        type: string
+
+      package_version:
+        description: "Package version"
         required: true
         type: string
 
       dry_run:
-        required: true
+        description: "Execute in dry-run mode"
+        required: false
+        default: true
         type: boolean
 
+      api_base_url:
+        description: "Package API base URL"
+        required: true
+        type: string
+
     secrets:
+
       API_TOKEN:
+        description: "API authentication token"
         required: true
 
-    outputs:
-      package_id:
-        description: "Created package ID"
-        value: ${{ jobs.create.outputs.package_id }}
 
 jobs:
 
-  create:
+  package-operation:
+
+    name: "${{ inputs.operation }} - ${{ inputs.environment }}"
+
     runs-on: ubuntu-latest
 
-    outputs:
-      package_id: ${{ steps.create.outputs.package_id }}
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+
+    concurrency:
+      group: package-${{ inputs.environment }}
+      cancel-in-progress: false
 
     steps:
 
-      - name: Validate inputs
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # ---------------------------------------------------------
+      # Validate input
+      # ---------------------------------------------------------
+
+      - name: Validate operation
+        shell: bash
         run: |
+
+          set -euo pipefail
+
+          case "${{ inputs.operation }}" in
+
+            create-package)
+              echo "Operation: create-package"
+              ;;
+
+            upload-package)
+              echo "Operation: upload-package"
+              ;;
+
+            distribute-package)
+              echo "Operation: distribute-package"
+              ;;
+
+            download-package)
+              echo "Operation: download-package"
+              ;;
+
+            deploy-package)
+              echo "Operation: deploy-package"
+              ;;
+
+            admin-mode)
+              echo "Operation: admin-mode"
+              ;;
+
+            cleanup-package)
+              echo "Operation: cleanup-package"
+              ;;
+
+            *)
+              echo "ERROR: Unsupported operation"
+              exit 1
+              ;;
+
+          esac
+
+
+      # ---------------------------------------------------------
+      # Display execution mode
+      # ---------------------------------------------------------
+
+      - name: Show execution mode
+        shell: bash
+        run: |
+
+          echo "======================================"
+          echo "Package Operation"
+          echo "======================================"
+
           echo "Environment : ${{ inputs.environment }}"
+          echo "Operation   : ${{ inputs.operation }}"
           echo "Package     : ${{ inputs.package_name }}"
+          echo "Version     : ${{ inputs.package_version }}"
           echo "Dry Run     : ${{ inputs.dry_run }}"
+          echo "API URL     : ${{ inputs.api_base_url }}"
 
-      - name: Dry Run
-        if: inputs.dry_run == true
-        run: |
-          echo "=================================="
-          echo "DRY RUN - CREATE PACKAGE"
-          echo "=================================="
-          echo "Would create:"
-          echo "Package: ${{ inputs.package_name }}"
-          echo "Environment: ${{ inputs.environment }}"
+          echo "======================================"
 
-          echo "DRY-RUN-PACKAGE-ID" >> "$GITHUB_OUTPUT"
+
+      # =========================================================
+      # CREATE PACKAGE
+      # =========================================================
 
       - name: Create package
-        id: create
-        if: inputs.dry_run == false
+        if: inputs.operation == 'create-package'
+        shell: bash
         env:
           API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
 
-          response=$(curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            --request POST \
-            --url "https://api.example.com/packages" \
-            --header "Authorization: Bearer ${API_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data '{
-              "name": "${{ inputs.package_name }}",
-              "environment": "${{ inputs.environment }}"
-            }')
+          set -euo pipefail
 
-          echo "$response"
+          echo "Creating package..."
 
-          package_id=$(echo "$response" | jq -r '.id')
+          REQUEST_BODY=$(cat <<EOF
+          {
+            "name": "${{ inputs.package_name }}",
+            "version": "${{ inputs.package_version }}"
+          }
+          EOF
+          )
 
-          if [ -z "$package_id" ] || [ "$package_id" = "null" ]; then
-            echo "ERROR: Package ID was not returned"
-            exit 1
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] POST ${{
+              inputs.api_base_url
+            }}/packages"
+
+            echo "[DRY-RUN] Request:"
+            echo "$REQUEST_BODY"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --url "${{ inputs.api_base_url }}/packages" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data "$REQUEST_BODY"
+
           fi
 
-          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
+
+      # =========================================================
+      # UPLOAD PACKAGE
+      # =========================================================
+
+      - name: Upload package
+        if: inputs.operation == 'upload-package'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Uploading package..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] Upload package:"
+            echo "${{ inputs.package_name }}"
+            echo "Version:"
+            echo "${{ inputs.package_version }}"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --url "${{ inputs.api_base_url }}/packages/upload" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data "{
+                \"name\": \"${{ inputs.package_name }}\",
+                \"version\": \"${{ inputs.package_version }}\"
+              }"
+
+          fi
+
+
+      # =========================================================
+      # DISTRIBUTE PACKAGE
+      # =========================================================
+
+      - name: Distribute package
+        if: inputs.operation == 'distribute-package'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Distributing package..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] POST:"
+            echo "${{ inputs.api_base_url }}/packages/distribute"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --url "${{ inputs.api_base_url }}/packages/distribute" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data "{
+                \"name\": \"${{ inputs.package_name }}\",
+                \"version\": \"${{ inputs.package_version }}\"
+              }"
+
+          fi
+
+
+      # =========================================================
+      # DOWNLOAD PACKAGE
+      # =========================================================
+
+      - name: Download package
+        if: inputs.operation == 'download-package'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Downloading package..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] GET:"
+            echo "${{ inputs.api_base_url }}/packages/${{ inputs.package_name }}/${{ inputs.package_version }}"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request GET \
+              --url "${{ inputs.api_base_url }}/packages/${{ inputs.package_name }}/${{ inputs.package_version }}" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --output "${{ inputs.package_name }}-${{ inputs.package_version }}.zip"
+
+          fi
+
+
+      # =========================================================
+      # DEPLOY PACKAGE
+      # =========================================================
+
+      - name: Deploy package
+        if: inputs.operation == 'deploy-package'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Deploying package..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] Deployment would execute:"
+            echo "Environment: ${{ inputs.environment }}"
+            echo "Package: ${{ inputs.package_name }}"
+            echo "Version: ${{ inputs.package_version }}"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --url "${{ inputs.api_base_url }}/deployments" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data "{
+                \"package\": \"${{ inputs.package_name }}\",
+                \"version\": \"${{ inputs.package_version }}\",
+                \"environment\": \"${{ inputs.environment }}\"
+              }"
+
+          fi
+
+
+      # =========================================================
+      # ADMIN MODE
+      # =========================================================
+
+      - name: Enable admin mode
+        if: inputs.operation == 'admin-mode'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Admin mode operation..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] Admin mode operation would execute."
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --url "${{ inputs.api_base_url }}/admin/mode" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data '{"enabled":true}'
+
+          fi
+
+
+      # =========================================================
+      # CLEANUP
+      # =========================================================
+
+      - name: Cleanup package
+        if: inputs.operation == 'cleanup-package'
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+
+          set -euo pipefail
+
+          echo "Cleaning package..."
+
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+
+            echo "[DRY-RUN] DELETE:"
+            echo "${{ inputs.api_base_url }}/packages/${{ inputs.package_name }}/${{ inputs.package_version }}"
+
+          else
+
+            curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request DELETE \
+              --url "${{ inputs.api_base_url }}/packages/${{ inputs.package_name }}/${{ inputs.package_version }}" \
+              --header "Authorization: Bearer ${API_TOKEN}"
+
+          fi
+
+
+      # =========================================================
+      # SUMMARY
+      # =========================================================
+
+      - name: Operation summary
+        if: always()
+        shell: bash
+        run: |
+
+          echo "======================================"
+          echo "PACKAGE OPERATION SUMMARY"
+          echo "======================================"
+
+          echo "Environment : ${{ inputs.environment }}"
+          echo "Operation   : ${{ inputs.operation }}"
+          echo "Package     : ${{ inputs.package_name }}"
+          echo "Version     : ${{ inputs.package_version }}"
+          echo "Dry Run     : ${{ inputs.dry_run }}"
+
+          echo "======================================"
