@@ -1,62 +1,220 @@
-name: DEV Package Operations
+
+name: Reusable Package Operations
 
 on:
-
-  workflow_dispatch:
-
+  workflow_call:
     inputs:
-
-      operation:
-        description: "Select package operation"
+      environment:
+        description: Target environment
         required: true
-        type: choice
-
-        options:
-          - create-package
-          - upload-package
-          - distribute-package
-          - download-package
-          - deploy-package
-          - admin-mode
-          - cleanup-package
-
+        type: string
       package_name:
-        description: "Package name"
+        description: Name of package
         required: true
         type: string
-
-      package_version:
-        description: "Package version"
-        required: true
-        type: string
-
       dry_run:
-        description: "Dry run"
+        description: Simulate deployment
         required: true
-        default: true
         type: boolean
 
+    outputs:
+      package_id:
+        description: Generated package identifier
+        value: ${{ jobs.package.outputs.package_id }}
 
 jobs:
+  package:
+    name: Package Lifecycle
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
 
-  package-operation:
+    permissions:
+      contents: read
 
-    uses: ./.github/workflows/package-operations.yml
+    outputs:
+      package_id: ${{ steps.create.outputs.package_id }}
 
-    with:
+    env:
+      API_URL: https://jsonplaceholder.typicode.com
+      PACKAGE_NAME: ${{ inputs.package_name }}
+      DRY_RUN: ${{ inputs.dry_run }}
 
-      environment: dev
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      operation: ${{ inputs.operation }}
+          if [[ ! "$PACKAGE_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "Invalid package name"
+            exit 1
+          fi
 
-      package_name: ${{ inputs.package_name }}
+          # This example deliberately prevents real deployments.
+          if [[ "$DRY_RUN" != "true" ]]; then
+            echo "Only dry-run is supported by the mock API."
+            exit 1
+          fi
 
-      package_version: ${{ inputs.package_version }}
+      # 1. CREATE PACKAGE
+      - name: Create package
+        id: create
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      dry_run: ${{ inputs.dry_run }}
+          mkdir -p package
 
-      api_base_url: ${{ vars.PACKAGE_API_URL }}
+          jq -n \
+            --arg name "$PACKAGE_NAME" \
+            --arg env "${{ inputs.environment }}" \
+            --arg run "$GITHUB_RUN_ID" \
+            '{name:$name, environment:$env,
+              run_id:$run, version:"1.0.0"}' \
+            > package/manifest.json
 
-    secrets:
+          curl --fail-with-body -sS \
+            --retry 3 \
+            -X POST "$API_URL/posts" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Create package",
+                 "body":"DEV dry run","userId":1}' \
+            > package/create-response.json
 
-      API_TOKEN: ${{ secrets.PACKAGE_API_TOKEN }}
+          jq -e '.id' package/create-response.json
+
+          zip -r "${PACKAGE_NAME}.zip" package
+
+          echo "package_id=$GITHUB_RUN_ID" \
+            >> "$GITHUB_OUTPUT"
+
+      # 2. DISTRIBUTE PACKAGE
+      - name: Validate distribution API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --fail-with-body -sS \
+            --retry 3 \
+            "$API_URL/posts/1" \
+            -o distribution-response.json
+
+          jq -e '.id == 1' \
+            distribution-response.json
+
+      - name: Distribute package as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package_name }}-${{ github.run_id }}
+          path: ${{ inputs.package_name }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      # 3. DOWNLOAD PACKAGE
+      - name: Remove local ZIP before download
+        shell: bash
+        run: |
+          rm -f "${PACKAGE_NAME}.zip"
+
+      - name: Download distributed package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package_name }}-${{ github.run_id }}
+          path: downloaded
+
+      - name: Verify downloaded package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          unzip -t \
+            "downloaded/${PACKAGE_NAME}.zip"
+
+          unzip -p \
+            "downloaded/${PACKAGE_NAME}.zip" \
+            package/manifest.json \
+            | jq -e \
+              --arg name "$PACKAGE_NAME" \
+              '.name == $name'
+
+      # 4. UPLOAD PACKAGE
+      - name: Upload package metadata to mock API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jq -n \
+            --arg name "$PACKAGE_NAME" \
+            '{title:"Upload package",
+              body:$name,userId:1}' \
+            > upload-request.json
+
+          curl --fail-with-body -sS \
+            --retry 3 \
+            -X POST "$API_URL/posts" \
+            -H "Content-Type: application/json" \
+            --data-binary @upload-request.json \
+            -o upload-response.json
+
+          jq -e '.id' upload-response.json
+
+          echo "Mock upload completed"
+
+      # 5. ADMIN MODE
+      - name: Enable simulated admin mode
+        shell: bash
+        run: |
+          echo "DRY RUN: Enable admin mode"
+          echo "No real server state changed"
+
+      # 6. DEPLOY PACKAGE
+      - name: Simulate deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --fail-with-body -sS \
+            --retry 3 \
+            -X PATCH "$API_URL/posts/1" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Package deployed - dry run"}' \
+            -o deploy-response.json
+
+          jq -e '.id == 1' deploy-response.json
+
+          echo "Deployment simulation completed"
+
+      # 7. CLEANUP PACKAGE
+      - name: Disable simulated admin mode
+        if: always()
+        shell: bash
+        run: |
+          echo "DRY RUN: Disable admin mode"
+
+      - name: Cleanup mock API
+        if: always()
+        shell: bash
+        run: |
+          curl --fail-with-body -sS \
+            --retry 3 \
+            -X DELETE "$API_URL/posts/1" \
+            -o cleanup-response.json
+
+      - name: Cleanup temporary files
+        if: always()
+        shell: bash
+        run: |
+          rm -rf package downloaded
+          rm -f ./*.json ./*.zip
+
+      - name: Execution summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Package execution"
+            echo "Environment: ${{ inputs.environment }}"
+            echo "Package: $PACKAGE_NAME"
+            echo "Dry run: $DRY_RUN"
+            echo "Run ID: $GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
